@@ -160,6 +160,10 @@ token-bleed-shield/
 ├── docs/
 │   ├── ARCHITECTURE.md                # System design & sequence flows
 │   ├── PREVENTIVE_MANIFESTO.md        # Why reactive dashboards fail
+│   ├── COMPETETIVE_ANALYSIS.md        # Market & competitor gap analysis
+│   ├── architecture/                 # Platform architecture (proxy SaaS, ledger, BYOC)
+│   │   ├── README.md                  # Index & reading order (start here)
+│   │   ├── 01-system-overview.md … 12-self-audit.md
 │   └── rfcs/
 │       └── 0001-preflight-environment-contracts.md
 ├── tests/                             # Full unit & integration test suite
@@ -191,6 +195,8 @@ token-bleed-shield/
 - [ ] Direct middleware proxy for OpenAI/Anthropic client SDKs.
 - [ ] Pre-commit hook for automated context budget verification.
 - [ ] Integration with Claude Code, Cursor, Windsurf, and custom agent frameworks.
+
+The full platform roadmap (proxy SaaS → actuators → attribution → BYOC) is specified in [`docs/architecture/11-roadmap.md`](docs/architecture/11-roadmap.md).
 
 ---
 

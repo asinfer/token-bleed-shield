@@ -1,0 +1,47 @@
+# Token Bleed Shield — Phase 0 observe-mode demo policy.
+# Effective modes are clamped to the project floor (observe) in this phase.
+apiVersion: tbs.dev/v1
+kind: Policy
+metadata:
+  project: demo
+  revision: 1
+spec:
+  mode: observe
+  kill_switch: false
+  rules:
+    - id: loop-breaker
+      detector: loop_repetition
+      actuator: circuit_breaker
+      mode: observe
+      rollout_percent: 100
+      params:
+        max_identical_args: 1
+        min_window: 3
+      thresholds:
+        gray_zone: [0.4, 0.7]
+    - id: clamp-tool-outputs
+      detector: over_fetch
+      actuator: tool_output_clamp
+      mode: advise
+      rollout_percent: 100
+      params:
+        default_cap_tokens: 2000
+        per_tool:
+          search: { cap: 800 }
+      thresholds: {}
+    - id: schema-minify
+      detector: verbosity
+      actuator: none
+      mode: observe
+      rollout_percent: 100
+      params:
+        min_savings_tokens: 8
+      thresholds: {}
+  attribution:
+    feature_header: x-tbs-feature
+  export:
+    billing_events: true
+  intelligence_budget:
+    max_ratio: 0.03
+    l2_sampling: 0.01
+    absolute_monthly_cap_usd: 25.0

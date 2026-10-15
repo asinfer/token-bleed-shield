@@ -1,0 +1,15 @@
+# Demo price table — subset of provider list prices (USD per million tokens).
+version: 1
+models:
+  gpt-4o:
+    input_per_mtok: 2.50
+    output_per_mtok: 10.00
+    cache_read_per_mtok: 1.25
+  gpt-4o-mini:
+    input_per_mtok: 0.15
+    output_per_mtok: 0.60
+    cache_read_per_mtok: 0.075
+  claude-sonnet-4:
+    input_per_mtok: 3.00
+    output_per_mtok: 15.00
+    cache_read_per_mtok: 1.50

@@ -1,0 +1,30 @@
+[package]
+name = "tbs-proxy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Token Bleed Shield data plane: inline observe-mode proxy with L0 detection and counterfactual savings ledger"
+
+[[bin]]
+name = "tbs-proxy"
+path = "src/main.rs"
+
+[dependencies]
+tbs-core = { path = "../tbs-core" }
+tokio.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+http-body-util.workspace = true
+hyper-rustls.workspace = true
+bytes.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+thiserror.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+time.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -1,5 +1,11 @@
 # Token Bleed Shield: Architecture & System Design
 
+> **Scope**: this document covers the current **CLI tool** (prober, gates, breaker). The
+> forward-looking **platform architecture** — inline proxy SaaS, tiered detection engine,
+> savings ledger, BYOC/self-hosted topologies — lives in
+> [`docs/architecture/`](architecture/README.md). The CLI guards here are the Phase-0
+> seed of that detection engine (see [architecture/03-detection-engine.md](architecture/03-detection-engine.md)).
+
 ## 1. Design Philosophy
 
 > **Rule 0**: Any token spent discovering what was already knowable is waste.
