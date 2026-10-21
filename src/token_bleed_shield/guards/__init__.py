@@ -1,6 +1,16 @@
 """Guards module for context budget checks and circuit breaking."""
 
-from .context_budget import ContextBudgetGate, BudgetAssessment
-from .circuit_breaker import DriftCircuitBreaker, BreakerVerdict
+from .circuit_breaker import AgentAction, BreakerVerdict, DriftCircuitBreaker
+from .context_budget import BudgetAssessment, ContextBudgetGate
+from .signals import classify_error, extract_command_heads, find_forbidden_command
 
-__all__ = ["ContextBudgetGate", "BudgetAssessment", "DriftCircuitBreaker", "BreakerVerdict"]
+__all__ = [
+    "AgentAction",
+    "BreakerVerdict",
+    "BudgetAssessment",
+    "ContextBudgetGate",
+    "DriftCircuitBreaker",
+    "classify_error",
+    "extract_command_heads",
+    "find_forbidden_command",
+]

@@ -1,8 +1,10 @@
 """Linter and minifier for JSON Schema and MCP tool specifications."""
 
 import json
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel, Field
+
 from ..config import ToolLinterConfig
 
 
@@ -27,8 +29,10 @@ class LinterReport(BaseModel):
 class ToolSchemaLinter:
     """Minifies and prunes tool definitions to slash repeated prompt tokens."""
 
-    def __init__(self, config: ToolLinterConfig = ToolLinterConfig()):
-        self.config = config
+    def __init__(self, config: Optional[ToolLinterConfig] = None):
+        # A default argument is evaluated once at import time, so a mutable default would be
+        # shared by every instance in the process and mutated by whoever configures it.
+        self.config = config or ToolLinterConfig()
 
     @staticmethod
     def estimate_tokens(obj: Any) -> int:

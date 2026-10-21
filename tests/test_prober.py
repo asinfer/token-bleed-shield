@@ -1,6 +1,5 @@
-from pathlib import Path
-from token_bleed_shield.prober.system_prober import SystemProber, ToolchainInfo, EnvironmentSnapshot
 from token_bleed_shield.prober.contract_generator import ContractGenerator
+from token_bleed_shield.prober.system_prober import EnvironmentSnapshot, SystemProber, ToolchainInfo
 
 
 def test_system_prober_capture():

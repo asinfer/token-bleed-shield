@@ -65,7 +65,7 @@ Analyzes function calling and MCP schemas, strips docstring fluff, removes redun
 Evaluates context payloads before dispatch. Identifies bloated file attachments, repetitive log dumps, and uncompressed ASTs, enforcing hard token boundaries before the API request leaves your machine.
 
 ### 4. Drift & Loop Circuit Breaker (`tbs breaker`)
-Monitors agent tool-calling patterns in flight. If an agent calls the same directory search 3 times or repeats similar errors, the circuit breaker trips immediately before token waste compounds.
+Evaluates each proposed tool call **before it executes**. A call that the environment contract forbids, or that repeats an identical call, is blocked outright; a suspected reconnaissance sweep or error cascade is reported and escalated according to your policy. The cost of a wasted call is never paid.
 
 ---
 
@@ -107,7 +107,26 @@ Generated `.agent-env.md` snippet:
 - Forbidden Actions: Do not traverse parent directories or search for system binaries.
 ```
 
-### 2. Lint and Minify Tool Schemas
+### 2. Inspect the Machine-Readable Contract
+The contract is what guardrails enforce. It is embedded in `.agent-env.md` as a fenced JSON block:
+
+```bash
+tbs contract
+```
+Output:
+```
+╭──────────────────────┬───────────────────────────────────────────────────────╮
+│ Field                │ Value                                               │
+├──────────────────────┼───────────────────────────────────────────────────────┤
+│ Contract Version     │ 1                                                   │
+│ Uv                   │ uv (uv 0.12.15) -> `uv run`                         │
+│ Uv Forbidden         │ `python`, `python3`, `pip`, `pipenv`                 │
+╰──────────────────────┴───────────────────────────────────────────────────────╯
+
+Guardrail: invocations of pip, pipenv, python, python3 are blocked before execution.
+```
+
+### 3. Lint and Minify Tool Schemas
 Inspect your MCP server or OpenAI/Anthropic tool schemas:
 
 ```bash
@@ -121,19 +140,66 @@ Output:
   Saved ~2,470 tokens per LLM inference call!
 ```
 
-### 3. Evaluate Context Budget Before Calling LLM
+### 4. Evaluate Context Budget Before Calling LLM
 Pre-flight check a prompt or conversation history:
 
 ```bash
 tbs gate --file context_payload.json --max-tokens 16000
 ```
 
-### 4. Test Agent Tool Loops for Drift
-Check agent execution histories for infinite loop patterns:
+### 5. Test Agent Tool Loops for Drift
+Replay an agent execution history. Each action is evaluated twice: once **before** execution
+(what a live guardrail would have blocked) and once **after** (the post-hoc detection point):
 
 ```bash
 tbs breaker --history agent_log.jsonl
 ```
+Output:
+```
+Contract: .agent-env.md (forbidden: pip, pipenv, python, python3)
+
+╭──── Step 1: BLOCKED before execution ────╮
+│ Tool: `run_shell_command`                │
+│ Signals: forbidden_command               │
+│ Enforcement: block                       │
+│                                          │
+│ Reason: Command `python` is forbidden by │
+│ the environment contract; the pinned    │
+│ toolchain requires `uv run`.             │
+╰──────────────────────────────────────────╯
+
+╭──── Replay Summary ──────────────────────╮
+│ Steps analysed: 4                        │
+│ Preventable before execution: 3 step(s)  │
+│ Detected only after execution: 0 step(s) │
+╰──────────────────────────────────────────╯
+```
+
+---
+
+## 🎛️ Policy Configuration
+
+Enforcement is a **preference in configuration**, never hardcoded behaviour. Every detection rule
+can independently be set to `block`, `warn`, `ask` (escalate to a human) or `off`:
+
+```yaml
+# .tokenbleedshield.yaml
+circuit_breaker:
+  default_enforcement: warn        # block | warn | ask | off
+  rules:
+    forbidden_command: { enforcement: block }
+    identical_args:    { enforcement: block }
+    repeated_error_signature: { enforcement: warn }
+    error_cascade:     { enforcement: warn }
+    same_tool_streak:   { enforcement: warn }
+    oscillation:       { enforcement: warn }
+```
+
+The same rule can warn in development and block in production with no code change. The file is
+read by every command, so `tbs init` preserves your settings rather than overwriting them.
+
+> The full target architecture — including the planned LLM judge and the SDK middleware — is
+> documented in [ARCHITECTURE.proposed.md](docs/ARCHITECTURE.proposed.md).
 
 ---
 
@@ -146,6 +212,8 @@ token-bleed-shield/
 │       ├── __init__.py
 │       ├── cli.py                     # Unified CLI entrypoint
 │       ├── config.py                  # Shield configuration models
+│       ├── policy.py                  # Signal taxonomy + enforcement resolution
+│       ├── contract.py                # Machine-readable contract model & parser
 │       ├── prober/
 │       │   ├── __init__.py
 │       │   ├── system_prober.py       # Detects uv, node, tools, OS
@@ -156,9 +224,11 @@ token-bleed-shield/
 │       └── guards/
 │           ├── __init__.py
 │           ├── context_budget.py      # Pre-dispatch token budget gates
-│           └── circuit_breaker.py     # Agent drift & repetition detector
+│           ├── circuit_breaker.py     # Pre-dispatch gate + drift detector
+│           └── signals.py             # Error bucketing & command-head matching
 ├── docs/
 │   ├── ARCHITECTURE.md                # System design & sequence flows
+│   ├── ARCHITECTURE.proposed.md       # Target architecture (judge, middleware)
 │   ├── PREVENTIVE_MANIFESTO.md        # Why reactive dashboards fail
 │   └── rfcs/
 │       └── 0001-preflight-environment-contracts.md
@@ -185,9 +255,15 @@ token-bleed-shield/
 
 - [x] Pre-flight host environment prober (`uv`, `pip`, `npm`, `pnpm`, `cargo`).
 - [x] Agent runtime contract generator (`.agent-env.md`).
+- [x] Machine-readable contract block, parsed by guardrails at enforcement time.
 - [x] Tool schema minifier for MCP and JSON Schema functions.
 - [x] Pre-dispatch context gating and token estimation.
 - [x] Sliding-window drift circuit breaker.
+- [x] **Pre-dispatch breaker** — evaluate a proposed tool call *before* it executes, so a
+      forbidden command or a repeated call is prevented rather than reported afterwards.
+- [x] **Per-rule enforcement policy** — `block` / `warn` / `ask` / `off`, configured in
+      `.tokenbleedshield.yaml` rather than hardcoded.
+- [ ] LLM judge in the loop — adjudicate ambiguous cases a rule engine cannot decide.
 - [ ] Direct middleware proxy for OpenAI/Anthropic client SDKs.
 - [ ] Pre-commit hook for automated context budget verification.
 - [ ] Integration with Claude Code, Cursor, Windsurf, and custom agent frameworks.

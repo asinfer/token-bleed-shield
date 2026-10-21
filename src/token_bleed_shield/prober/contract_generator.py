@@ -2,11 +2,46 @@
 
 from pathlib import Path
 from typing import Optional
-from .system_prober import EnvironmentSnapshot
+
+from ..contract import CONTRACT_VERSION, ContractSnapshot, ToolchainContract, render_json_block
+from .system_prober import EnvironmentSnapshot, ToolchainInfo
 
 
 class ContractGenerator:
-    """Renders machine-actionable pre-flight contracts for LLM agents."""
+    """Renders machine-actionable pre-flight contracts for LLM agents.
+
+    The rendered document serves two audiences at once: the prose sections are written for the
+    agent's system prompt, while the embedded JSON block is the machine-readable form that
+    guardrails parse.
+    """
+
+    @staticmethod
+    def _toolchain_contract(toolchain: Optional[ToolchainInfo]) -> Optional[ToolchainContract]:
+        if toolchain is None:
+            return None
+        return ToolchainContract(
+            name=toolchain.name,
+            version=toolchain.version,
+            command_prefix=toolchain.command_prefix,
+            forbidden=list(toolchain.forbidden_alternatives),
+        )
+
+    @classmethod
+    def build_snapshot(cls, snapshot: EnvironmentSnapshot) -> ContractSnapshot:
+        """Project an environment snapshot onto the machine-readable contract model."""
+        return ContractSnapshot(
+            contract_version=CONTRACT_VERSION,
+            os_name=snapshot.os_name,
+            os_release=snapshot.os_release,
+            architecture=snapshot.architecture,
+            primary_shell=snapshot.primary_shell,
+            workspace_root=snapshot.workspace_root,
+            git_branch=snapshot.git_branch,
+            detected_project_files=list(snapshot.detected_project_files),
+            python=cls._toolchain_contract(snapshot.python_toolchain),
+            node=cls._toolchain_contract(snapshot.node_toolchain),
+            rust=cls._toolchain_contract(snapshot.rust_toolchain),
+        )
 
     @staticmethod
     def render_markdown(snapshot: EnvironmentSnapshot) -> str:
@@ -63,7 +98,10 @@ class ContractGenerator:
             "3. **No Redundant Introspection**: Trust the directives above as immutable ground truth.",
         ])
 
-        return "\n".join(lines) + "\n"
+        prose = "\n".join(lines)
+
+        contract_snapshot = ContractGenerator.build_snapshot(snapshot)
+        return f"{prose}\n\n## Machine-Readable Contract\n\n{render_json_block(contract_snapshot)}\n"
 
     @classmethod
     def write_contract(cls, snapshot: EnvironmentSnapshot, target_path: Optional[Path] = None) -> Path:
