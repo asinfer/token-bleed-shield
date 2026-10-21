@@ -1,4 +1,11 @@
 # Token Bleed Shield: Preventive Policy Configuration
+#
+# Enforcement levels: block | warn | ask | off
+#   block - prevent the action before it executes
+#   warn  - report it and let the action proceed
+#   ask   - escalate to a human for an explicit decision
+#   off   - ignore the rule
+
 prober:
   prefer_uv: true
   prefer_pnpm: true
@@ -19,7 +26,25 @@ budget_gate:
   reject_oversized: false
 
 circuit_breaker:
+  # Tolerated repeats before a signal fires.
   max_consecutive_same_tools: 2
   max_identical_tool_args: 1
   max_consecutive_errors: 3
+  max_repeated_error_signature: 2
   sliding_window_size: 6
+
+  default_enforcement: warn
+
+  rules:
+    forbidden_command:
+      enforcement: block
+    identical_args:
+      enforcement: block
+    repeated_error_signature:
+      enforcement: warn
+    error_cascade:
+      enforcement: warn
+    same_tool_streak:
+      enforcement: warn
+    oscillation:
+      enforcement: warn

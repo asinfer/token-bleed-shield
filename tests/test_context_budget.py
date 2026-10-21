@@ -1,5 +1,5 @@
-from token_bleed_shield.guards.context_budget import ContextBudgetGate
 from token_bleed_shield.config import BudgetGateConfig
+from token_bleed_shield.guards.context_budget import ContextBudgetGate
 
 
 def test_context_budget_evaluation():

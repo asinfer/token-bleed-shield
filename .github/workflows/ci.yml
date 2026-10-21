@@ -26,9 +26,10 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: |
-          uv pip install -e . --system
-          uv pip install pytest pytest-cov --system
+        run: uv pip install -e ".[dev]" --system
+
+      - name: Lint
+        run: ruff check src tests
 
       - name: Run tests
         run: |

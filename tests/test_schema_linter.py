@@ -1,5 +1,5 @@
-from token_bleed_shield.tools.schema_linter import ToolSchemaLinter
 from token_bleed_shield.config import ToolLinterConfig
+from token_bleed_shield.tools.schema_linter import ToolSchemaLinter
 
 
 def test_tool_schema_minification():

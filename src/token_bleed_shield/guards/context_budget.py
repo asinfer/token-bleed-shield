@@ -1,9 +1,10 @@
 """Pre-flight context budget gating to prevent token overflow and runaway charges."""
 
-import math
 import re
 from typing import List, Optional
+
 from pydantic import BaseModel, Field
+
 from ..config import BudgetGateConfig
 
 
@@ -27,8 +28,10 @@ class BudgetAssessment(BaseModel):
 class ContextBudgetGate:
     """Pre-evaluates outgoing prompt and context payloads before API dispatch."""
 
-    def __init__(self, config: BudgetGateConfig = BudgetGateConfig()):
-        self.config = config
+    def __init__(self, config: Optional[BudgetGateConfig] = None):
+        # A default argument is evaluated once at import time, so a mutable default would be
+        # shared by every instance in the process and mutated by whoever configures it.
+        self.config = config or BudgetGateConfig()
 
     def estimate_tokens(self, text: str) -> int:
         return max(1, int(len(text) / self.config.char_per_token_ratio))

@@ -5,7 +5,8 @@ import platform
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List, Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -73,13 +74,17 @@ class SystemProber:
 
         if has_uv:
             ver = self._get_command_version(["uv", "--version"])
+            forbidden = ["python", "python3", "pip", "pipenv"]
+            if platform.system() == "Windows":
+                # `py` is the Windows Python launcher and the classic wrong-binary trap.
+                forbidden.append("py")
             return ToolchainInfo(
                 name="uv",
                 available=True,
                 version=ver,
                 path=shutil.which("uv"),
                 preferred_for=["package_management", "script_execution", "venv_creation"],
-                forbidden_alternatives=["python", "python3", "pip", "pipenv"],
+                forbidden_alternatives=forbidden,
                 command_prefix="uv run",
             )
         elif has_poetry:

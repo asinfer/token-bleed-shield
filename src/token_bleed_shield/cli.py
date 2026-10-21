@@ -1,7 +1,8 @@
-import sys
 import json
+import sys
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
+
 import typer
 from rich.console import Console
 from rich.panel import Panel
@@ -14,8 +15,9 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-from .config import ShieldConfig
-from .guards.circuit_breaker import AgentAction, DriftCircuitBreaker
+from .config import Enforcement, ShieldConfig
+from .contract import ContractParseError, ContractSnapshot, load_contract
+from .guards.circuit_breaker import AgentAction, BreakerVerdict, DriftCircuitBreaker
 from .guards.context_budget import ContextBudgetGate
 from .prober.contract_generator import ContractGenerator
 from .prober.system_prober import SystemProber
@@ -28,6 +30,36 @@ app = typer.Typer(
 )
 console = Console(legacy_windows=False)
 
+DEFAULT_CONFIG_PATH = Path(".tokenbleedshield.yaml")
+DEFAULT_CONTRACT_PATH = Path(".agent-env.md")
+
+
+def _load_config(config_path: Optional[Path]) -> ShieldConfig:
+    """Load configuration from disk, falling back to built-in defaults."""
+    return ShieldConfig.load(config_path or DEFAULT_CONFIG_PATH)
+
+
+def _load_contract(contract_path: Path) -> Optional[ContractSnapshot]:
+    """Load the environment contract if it exists, otherwise return ``None``."""
+    if not contract_path.is_file():
+        return None
+    try:
+        return load_contract(contract_path)
+    except ContractParseError as exc:
+        console.print(f"[bold yellow]Warning:[/bold yellow] {exc}")
+        return None
+
+
+def _load_actions(history_file: Path) -> List[AgentAction]:
+    """Parse a JSON or JSONL action history file."""
+    content = history_file.read_text(encoding="utf-8").strip()
+    if history_file.suffix == ".jsonl":
+        records = [json.loads(line) for line in content.splitlines() if line.strip()]
+    else:
+        raw = json.loads(content)
+        records = raw if isinstance(raw, list) else [raw]
+    return [AgentAction(**record) for record in records]
+
 
 @app.command()
 def probe(
@@ -37,10 +69,15 @@ def probe(
     json_output: Optional[Path] = typer.Option(
         None, "--json", help="Optional path to output raw JSON snapshot"
     ),
+    config: Optional[Path] = typer.Option(
+        None, "--config", "-C", help="Path to a Token Bleed Shield config file"
+    ),
 ):
     """Probe the local host environment once and generate an immutable agent contract."""
     console.print(Panel.fit("[bold cyan]🛡️ Token Bleed Shield — Pre-flight Prober[/bold cyan]"))
-    
+
+    shield_config = _load_config(config)
+
     prober = SystemProber()
     with console.status("[bold green]Probing local toolchains and runtimes..."):
         snapshot = prober.capture()
@@ -77,13 +114,71 @@ def probe(
 
     console.print(table)
 
-    contract_path = ContractGenerator.write_contract(snapshot, output)
+    contract_path = ContractGenerator.write_contract(
+        snapshot, output or Path(shield_config.prober.contract_filename)
+    )
     console.print(f"\n[bold green]✔ Successfully locked runtime contract to:[/bold green] [underline]{contract_path}[/underline]")
     console.print("[dim]Inject this contract into your agent's system prompt to stop exploratory tool loops.[/dim]\n")
 
     if json_output:
         json_output.write_text(snapshot.model_dump_json(indent=2), encoding="utf-8")
         console.print(f"[green]✔ Saved JSON snapshot to:[/green] {json_output}")
+
+
+@app.command("contract")
+def show_contract(
+    contract: Path = typer.Option(
+        DEFAULT_CONTRACT_PATH, "--contract", "-c", help="Path to the environment contract"
+    ),
+):
+    """Show the machine-readable environment contract that guardrails enforce."""
+    console.print(Panel.fit("[bold cyan]📜 Environment Contract[/bold cyan]"))
+
+    if not contract.is_file():
+        console.print(f"[bold red]Error:[/bold red] Contract {contract} not found. Run `tbs probe` first.")
+        raise typer.Exit(code=1)
+
+    try:
+        snapshot = load_contract(contract)
+    except ContractParseError as exc:
+        console.print(f"[bold red]Error:[/bold red] {exc}")
+        raise typer.Exit(code=1)
+
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("Field", style="dim", width=20)
+    table.add_column("Value")
+
+    table.add_row("Contract Version", str(snapshot.contract_version))
+    table.add_row("OS", f"{snapshot.os_name} {snapshot.os_release} ({snapshot.architecture})")
+    table.add_row("Shell", snapshot.primary_shell)
+    table.add_row("Workspace Root", snapshot.workspace_root)
+    if snapshot.git_branch:
+        table.add_row("Git Branch", snapshot.git_branch)
+    if snapshot.detected_project_files:
+        table.add_row("Project Files", ", ".join(snapshot.detected_project_files))
+
+    for toolchain in snapshot.toolchains:
+        label = toolchain.name.capitalize()
+        detail = toolchain.name
+        if toolchain.version:
+            detail += f" ({toolchain.version})"
+        if toolchain.command_prefix:
+            detail += f" -> `{toolchain.command_prefix}`"
+        table.add_row(label, detail)
+        if toolchain.forbidden:
+            forbidden = ", ".join(f"`{name}`" for name in toolchain.forbidden)
+            table.add_row(f"{label} Forbidden", forbidden)
+
+    console.print(table)
+
+    if snapshot.forbidden_commands:
+        console.print(
+            f"\n[bold]Guardrail:[/bold] invocations of "
+            f"[bold red]{', '.join(snapshot.forbidden_commands)}[/bold red] are blocked "
+            "before execution.\n"
+        )
+    else:
+        console.print("\n[dim]No forbidden commands declared in this contract.[/dim]\n")
 
 
 @app.command("lint-tools")
@@ -94,6 +189,9 @@ def lint_tools(
     ),
     strip_titles: bool = typer.Option(True, "--strip-titles/--keep-titles", help="Strip JSON schema 'title' fields"),
     max_desc_length: int = typer.Option(140, "--max-desc", help="Max character length for parameter descriptions"),
+    config: Optional[Path] = typer.Option(
+        None, "--config", "-C", help="Path to a Token Bleed Shield config file"
+    ),
 ):
     """Minify tool and MCP schemas to cut 40-70% of static prompt token bloat."""
     console.print(Panel.fit("[bold cyan]🛠️ Tool Schema Minifier & Linter[/bold cyan]"))
@@ -109,7 +207,8 @@ def lint_tools(
         console.print(f"[bold red]Failed to parse JSON:[/bold red] {e}")
         raise typer.Exit(code=1)
 
-    linter = ToolSchemaLinter()
+    shield_config = _load_config(config)
+    linter = ToolSchemaLinter(shield_config.tool_linter)
     linter.config.strip_titles = strip_titles
     linter.config.max_description_length = max_desc_length
     report = linter.lint_tools(tools)
@@ -139,22 +238,31 @@ def lint_tools(
         console.print(f"[green]✔ Minified schemas saved to:[/green] {output_file}")
 
 
-@app.command("gate")
+@app.command()
 def gate(
     file: Optional[Path] = typer.Option(None, "--file", "-f", help="File to evaluate (prompt or context dump)"),
     max_tokens: int = typer.Option(32000, "--max-tokens", help="Maximum allowable context tokens"),
     warn_threshold: int = typer.Option(24000, "--warn", help="Warning threshold in tokens"),
+    config: Optional[Path] = typer.Option(
+        None, "--config", "-C", help="Path to a Token Bleed Shield config file"
+    ),
 ):
     """Pre-flight check context payload before sending to LLM API."""
     console.print(Panel.fit("[bold cyan]🚪 Context Budget Gate[/bold cyan]"))
 
-    if file and file.exists():
-        content = file.read_text(encoding="utf-8")
-    else:
-        console.print("[dim]No file specified. Reading test content or stdin...[/dim]")
-        content = "Example context payload."
+    shield_config = _load_config(config)
 
-    gate_checker = ContextBudgetGate()
+    if file is None:
+        console.print("[bold red]Error:[/bold red] No file specified. Pass --file <path>.")
+        raise typer.Exit(code=1)
+
+    if not file.is_file():
+        console.print(f"[bold red]Error:[/bold red] File {file} not found.")
+        raise typer.Exit(code=1)
+
+    content = file.read_text(encoding="utf-8")
+
+    gate_checker = ContextBudgetGate(shield_config.budget_gate)
     gate_checker.config.max_context_tokens = max_tokens
     gate_checker.config.warn_threshold_tokens = warn_threshold
 
@@ -184,65 +292,126 @@ def gate(
         console.print("[bold green]✔ Context payload is clean and within budget limits.[/bold green]")
 
 
-@app.command("breaker")
+@app.command()
 def breaker(
     history_file: Path = typer.Option(..., "--history", "-h", help="JSON or JSONL file with agent action logs"),
+    contract: Path = typer.Option(
+        DEFAULT_CONTRACT_PATH, "--contract", "-c", help="Path to the environment contract"
+    ),
+    enforcement: Optional[Enforcement] = typer.Option(
+        None,
+        "--enforcement",
+        "-e",
+        help="Override the enforcement level for every rule in this replay (block|warn|ask|off)",
+    ),
+    config: Optional[Path] = typer.Option(
+        None, "--config", "-C", help="Path to a Token Bleed Shield config file"
+    ),
 ):
-    """Analyze agent tool history to detect infinite loops and model drift."""
+    """Analyze agent tool history to detect infinite loops and model drift.
+
+    Each action is evaluated twice: once *before* execution (what a live guardrail would have
+    blocked) and once *after* (the post-hoc detection point).
+    """
     console.print(Panel.fit("[bold cyan]⚡ Drift & Loop Circuit Breaker[/bold cyan]"))
 
     if not history_file.exists():
         console.print(f"[bold red]Error:[/bold red] History file {history_file} not found.")
         raise typer.Exit(code=1)
 
-    breaker_engine = DriftCircuitBreaker()
-    actions = []
+    shield_config = _load_config(config)
+    if enforcement is not None:
+        # A true override: every rule adopts the requested level, not just the default.
+        shield_config.circuit_breaker.default_enforcement = enforcement
+        for rule in shield_config.circuit_breaker.rules.values():
+            rule.enforcement = enforcement
+
+    snapshot = _load_contract(contract)
+    if snapshot is None:
+        console.print(
+            "[dim]No environment contract found - forbidden-command detection is disabled. "
+            "Run `tbs probe` to enable it.[/dim]\n"
+        )
+    else:
+        console.print(
+            f"Contract: [underline]{contract}[/underline] "
+            f"(forbidden: {', '.join(snapshot.forbidden_commands) or 'none'})\n"
+        )
+
+    breaker_engine = DriftCircuitBreaker(shield_config.circuit_breaker, contract=snapshot)
 
     try:
-        content = history_file.read_text(encoding="utf-8").strip()
-        if history_file.suffix == ".jsonl":
-            for line in content.splitlines():
-                if line.strip():
-                    actions.append(AgentAction(**json.loads(line)))
-        else:
-            raw = json.loads(content)
-            actions = [AgentAction(**item) for item in (raw if isinstance(raw, list) else [raw])]
+        actions = _load_actions(history_file)
     except Exception as e:
         console.print(f"[bold red]Failed to load actions:[/bold red] {e}")
         raise typer.Exit(code=1)
 
     console.print(f"Loaded {len(actions)} historical agent actions.\n")
 
-    tripped = False
+    blocked_steps: List[int] = []
+    detected_steps: List[int] = []
+
     for idx, act in enumerate(actions, start=1):
-        verdict = breaker_engine.record_and_evaluate(act)
-        if verdict.tripped:
-            tripped = True
-            console.print(
-                Panel(
-                    f"[bold red]🚨 CIRCUIT BREAKER TRIPPED AT STEP {idx}![/bold red]\n\n"
-                    f"[bold]Reason:[/bold] {verdict.reason}\n"
-                    f"[bold green]Suggested Action:[/bold green] {verdict.suggested_action}",
-                    title="Circuit Tripped",
-                    border_style="red",
-                )
-            )
-            break
+        pre_verdict = breaker_engine.pre_check(act)
+        post_verdict = breaker_engine.record(act)
 
-    if not tripped:
-        console.print("[bold green]✔ No drift or infinite repetition detected in action history.[/bold green]")
+        if pre_verdict is not None and pre_verdict.tripped:
+            blocked_steps.append(idx)
+            _print_step(idx, act, pre_verdict, blocked=True)
+        elif post_verdict.tripped:
+            detected_steps.append(idx)
+            _print_step(idx, act, post_verdict, blocked=False)
+        else:
+            console.print(f"[dim]Step {idx}: allowed ({act.tool_name})[/dim]")
+
+    console.print()
+    summary = (
+        f"[bold]Steps analysed:[/bold] {len(actions)}\n"
+        f"[bold green]Preventable before execution:[/bold green] "
+        f"{len(blocked_steps)} step(s){' -> ' + ', '.join(str(s) for s in blocked_steps) if blocked_steps else ''}\n"
+        f"[bold yellow]Detected only after execution:[/bold yellow] "
+        f"{len(detected_steps)} step(s){' -> ' + ', '.join(str(s) for s in detected_steps) if detected_steps else ''}\n"
+        f"[dim]Replay assumes the agent retried identically after a block; real behaviour may diverge.[/dim]"
+    )
+    console.print(Panel(summary, title="Replay Summary", border_style="cyan"))
 
 
-@app.command("init")
-def init():
+def _print_step(idx: int, act: AgentAction, verdict: BreakerVerdict, blocked: bool) -> None:
+    """Render one replay step."""
+    if blocked:
+        header = f"[bold red]Step {idx}: BLOCKED before execution[/bold red]"
+        border = "red"
+    elif verdict.enforcement is Enforcement.ASK:
+        header = f"[bold yellow]Step {idx}: ESCALATE[/bold yellow]"
+        border = "yellow"
+    else:
+        header = f"[bold yellow]Step {idx}: detected after execution[/bold yellow]"
+        border = "yellow"
+
+    body = (
+        f"[bold]Tool:[/bold] `{act.tool_name}`\n"
+        f"[bold]Signals:[/bold] {', '.join(verdict.signals)}\n"
+        f"[bold]Enforcement:[/bold] {verdict.enforcement.value}\n\n"
+        f"[bold]Reason:[/bold] {verdict.reason}\n\n"
+        f"[bold green]Action:[/bold green] {verdict.suggested_action}"
+    )
+    console.print(Panel(body, title=header, border_style=border))
+
+
+@app.command()
+def init(
+    config: Optional[Path] = typer.Option(
+        None, "--config", "-C", help="Path to a Token Bleed Shield config file"
+    ),
+):
     """Initialize Token Bleed Shield in the current repository."""
     console.print(Panel.fit("[bold cyan]🛡️ Initializing Token Bleed Shield[/bold cyan]"))
 
-    config = ShieldConfig()
-    config.save(Path(".tokenbleedshield.yaml"))
-    console.print("[green]✔ Created configuration file:[/green] `.tokenbleedshield.yaml`")
+    target = config or DEFAULT_CONFIG_PATH
+    shield_config = ShieldConfig.load(target)
+    shield_config.save(target)
+    console.print(f"[green]✔ Wrote configuration file:[/green] `{target}`")
 
-    # Run prober
     prober = SystemProber()
     snapshot = prober.capture()
     contract_path = ContractGenerator.write_contract(snapshot)

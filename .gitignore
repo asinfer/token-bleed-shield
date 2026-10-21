@@ -47,3 +47,6 @@ htmlcov/
 *.log
 .DS_Store
 Thumbs.db
+
+# Local planning notes
+todo.md
